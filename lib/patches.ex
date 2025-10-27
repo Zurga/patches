@@ -69,7 +69,7 @@ defmodule Patches do
           Patches.namespace(module, unquote(env.module))
         end
       end
-    ] ++ wrappers(modules_and_modifications)
+    ] ++ wrappers(modules_and_modifications, namespaced_modules)
   end
 
   defmacro patch(module) do
@@ -161,17 +161,17 @@ defmodule Patches do
     Enum.reduce(mfws, code, &wrap_function(&2, &1, wrapping_module))
   end
 
-  def wrap_function(code, {_module, function, _}, wrapping_module) do
-    do_wrap_function(code, function, nil, wrapping_module)
+  def wrap_function(code, {module, function, _}, wrapping_module) do
+    do_wrap_function(code, module, function, nil, wrapping_module)
   end
 
-  def wrap_function(code, {_module, function, arity, _}, wrapping_module) do
-    do_wrap_function(code, function, arity, wrapping_module)
+  def wrap_function(code, {module, function, arity, _}, wrapping_module) do
+    do_wrap_function(code, module, function, arity, wrapping_module)
   end
 
-  defp do_wrap_function(code, function, arity, wrapping_module) do
+  defp do_wrap_function(code, module, function, arity, wrapping_module) do
     code
-    |> modify_function(function, arity, &wrap_abstract_function(&1, wrapping_module))
+    |> modify_function(function, arity, &wrap_abstract_function(&1, module, wrapping_module))
   end
 
   defp modify_function(code, function, arity, func) do
@@ -186,7 +186,7 @@ defmodule Patches do
     |> Enum.reverse()
   end
 
-  defp wrap_abstract_function(function_tuple, wrapping_module) do
+  defp wrap_abstract_function(function_tuple, origin, wrapping_module) do
     {:function, line, function, arity, clauses} = function_tuple
 
     clauses =
@@ -194,7 +194,8 @@ defmodule Patches do
         new_body = [
           {:call, line, {:remote, line, {:atom, line, wrapping_module}, {:atom, line, :wrap}},
            [
-             {:tuple, line, [{:atom, line, function}, {:integer, line, arity}]},
+             {:tuple, line,
+              [{:atom, line, origin}, {:atom, line, function}, {:integer, line, arity}]},
              {:fun, line, {:clauses, [{:clause, line, [], [], body}]}}
            ]}
         ]
@@ -259,12 +260,12 @@ defmodule Patches do
     end
   end
 
-  defp wrappers(module_map) do
-    for {_module, %{wrap: modifications}} <- module_map do
+  defp wrappers(module_map, namespaces) do
+    for {module, %{wrap: modifications}} <- module_map do
       Enum.map(modifications, fn
         {_, function, arity, wrapper} ->
           quote do
-            def wrap({unquote(function), unquote(arity)}, fun) do
+            def wrap({unquote(namespaces[module]), unquote(function), unquote(arity)}, fun) do
               result = unquote(wrapper)(fun.())
               result
             end
@@ -272,7 +273,7 @@ defmodule Patches do
 
         {_, function, wrapper} ->
           quote do
-            def wrap({unquote(function)}, fun) do
+            def wrap({unquote(namespaces[module]), unquote(function)}, fun) do
               result = unquote(wrapper)(fun.())
               result
             end
